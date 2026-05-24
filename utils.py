@@ -1,4 +1,5 @@
 import random
+import os
 
 def generate_year_options(correct_year: int):
     options = {correct_year}
@@ -15,3 +16,15 @@ def generate_year_options(correct_year: int):
     options = list(options)
     random.shuffle(options)
     return options
+
+# ----------------------------
+# Cleanup
+# ----------------------------
+def cleanup_files(*paths):
+    for path in paths:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+
