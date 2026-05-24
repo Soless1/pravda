@@ -1,47 +1,59 @@
 import fitz
-import re
-
-import fitz
 
 
-def extract_headlines(pdf_path):
+def extract_headlines(pdf_path, top_n=20):
     doc = fitz.open(pdf_path)
 
-    headlines = []
+    candidates = []
 
     for page in doc:
-        blocks = page.get_text("blocks")
+        data = page.get_text("dict")
 
-        # сортируем как человек читает: сверху вниз, слева направо
-        blocks = sorted(blocks, key=lambda b: (b[1], b[0]))
-
-        for x0, y0, x1, y1, text, *_ in blocks:
-            text = text.strip()
-
-            if not text:
+        for block in data["blocks"]:
+            if "lines" not in block:
                 continue
 
-            # фильтр мусора
-            if len(text) < 10 or len(text) > 120:
-                continue
+            for line in block["lines"]:
+                line_text = ""
+                max_size = 0
 
-            # часто заголовки в газетах КАПСОМ
-            if text.upper() != text:
-                continue
+                for span in line["spans"]:
+                    text = span["text"].strip()
+                    size = span["size"]
 
-            # убираем явный мусор
-            if any(char.isdigit() for char in text) and len(text) < 30:
-                continue
+                    line_text += text + " "
+                    max_size = max(max_size, size)
 
-            headlines.append(text)
+                line_text = line_text.strip()
 
-    # убираем дубликаты
+                if not line_text:
+                    continue
+
+                candidates.append((line_text, max_size))
+
+    # сортируем по размеру шрифта (главный сигнал)
+    candidates.sort(key=lambda x: x[1], reverse=True)
+
+    headlines = []
     seen = set()
-    result = []
 
-    for h in headlines:
-        if h not in seen:
-            seen.add(h)
-            result.append(h)
+    for text, size in candidates:
+        text = text.strip()
 
-    return result[:25]
+        # фильтры мусора
+        if len(text) < 6:
+            continue
+
+        if text.isdigit():
+            continue
+
+        if text in seen:
+            continue
+
+        seen.add(text)
+        headlines.append(text)
+
+        if len(headlines) >= top_n:
+            break
+
+    return headlines

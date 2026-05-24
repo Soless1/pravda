@@ -2,75 +2,84 @@ import requests
 import random
 import re
 import uuid
+import os
 import fitz
+
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
+from datetime import datetime
 
 BASE = "https://marxism-leninism.info"
 
+YEAR_CACHE = None
+ISSUE_CACHE = {}
+
+
+# -------------------- CACHE --------------------
 
 def get_year_pages():
+    global YEAR_CACHE
+
+    if YEAR_CACHE is not None:
+        return YEAR_CACHE
+
     url = f"{BASE}/paper/pravda-1"
-    html = requests.get(url).text
+    html = requests.get(url, timeout=10).text
     soup = BeautifulSoup(html, "html.parser")
 
-    years = []
+    YEAR_CACHE = list({
+        BASE + a["href"]
+        for a in soup.find_all("a", href=True)
+        if a["href"].startswith("/paper/pravda_") and "-" in a["href"]
+    })
 
-    for a in soup.find_all("a"):
-        href = a.get("href")
-
-        if href and href.startswith("/paper/pravda_") and "-" in href:
-            years.append(BASE + href)
-
-    return list(set(years))
+    return YEAR_CACHE
 
 
 def get_issues(year_url):
-    html = requests.get(year_url).text
+    global ISSUE_CACHE
+
+    if year_url in ISSUE_CACHE:
+        return ISSUE_CACHE[year_url]
+
+    html = requests.get(year_url, timeout=10).text
     soup = BeautifulSoup(html, "html.parser")
 
-    issues = []
+    issues = list({
+        BASE + a["href"] if a["href"].startswith("/") else a["href"]
+        for a in soup.find_all("a", href=True)
+        if "/paper/pravda_" in a["href"] and "_" in a["href"]
+    })
 
-    for a in soup.find_all("a"):
-        href = a.get("href")
+    ISSUE_CACHE[year_url] = issues
+    return issues
 
-        if href and "/paper/pravda_" in href and "_" in href:
-            if href.startswith("/"):
-                href = BASE + href
-            issues.append(href)
 
-    return list(set(issues))
-
+# -------------------- PARSING --------------------
 
 def extract_pdf(issue_url):
     html = requests.get(issue_url).text
 
-    pdfs = re.findall(r"https://[^\"']+\.pdf", html)
-    if pdfs:
-        return pdfs[0]
+    pdf = re.search(r"https://[^\"']+\.pdf", html)
+    if pdf:
+        return pdf.group(0)
 
-    files = re.findall(r"file=([^\"']+)", html)
-    if files:
-        return unquote(files[0])
+    file = re.search(r"file=([^\"']+)", html)
+    if file:
+        return unquote(file.group(1))
 
-    data_urls = re.findall(r"https://[^\"']+selcdn[^\"']+", html)
-    for u in data_urls:
-        if ".pdf" in u:
-            return u
+    selcdn = re.search(r"https://[^\"']+selcdn[^\"']+", html)
+    if selcdn and ".pdf" in selcdn.group(0):
+        return selcdn.group(0)
 
     return None
 
 
 def download_pdf(url):
-    import uuid
-    import os
-
     filename = f"{uuid.uuid4().hex}.pdf"
     path = os.path.join("data/pdf", filename)
 
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    r = requests.get(url, headers=headers, stream=True)
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, stream=True)
     r.raise_for_status()
 
     with open(path, "wb") as f:
@@ -78,39 +87,61 @@ def download_pdf(url):
             f.write(chunk)
 
     return path
+
+
 def has_text_layer(pdf_path, min_chars=200):
     doc = fitz.open(pdf_path)
-    total = 0
 
-    for page in doc:
-        total += len(page.get_text().strip())
-        if total >= min_chars:
-            return True
+    total = sum(len(page.get_text().strip()) for page in doc)
+    return total >= min_chars
 
-    return False
+
+# -------------------- GAME LOGIC --------------------
+
+def get_today_issue_number():
+    return datetime.now().timetuple().tm_yday
+
+
+def find_today_issue(issues):
+    today = get_today_issue_number()
+
+    return [
+        u for u in issues
+        if (m := re.search(r"_(\d+)$", u)) and int(m.group(1)) == today
+    ]
 
 
 def run(max_attempts=10):
+    print("🔎 Ищу выпуск газеты...")
+
     years = get_year_pages()
     if not years:
-        return None
+        return None, None
+
+    today_issue = get_today_issue_number()
 
     for _ in range(max_attempts):
-        year = random.choice(years)
 
-        issues = get_issues(year)
+        year_url = random.choice(years)
+        year = re.search(r"pravda_(\d{4})", year_url)
+        year = year.group(1) if year else "unknown"
+
+        issues = get_issues(year_url)
         if not issues:
             continue
 
-        issue = random.choice(issues)
+        matching = find_today_issue(issues)
+        issue = random.choice(matching) if matching else random.choice(issues)
 
         pdf_url = extract_pdf(issue)
         if not pdf_url:
             continue
 
-        file = download_pdf(pdf_url)
+        print("нашел пдф")
+        pdf_path = download_pdf(pdf_url)
+        print("скачал пдф, проверяю текстовый слой...")
 
-        if has_text_layer(file):
-            return file
+        if has_text_layer(pdf_path):
+            return pdf_path, year
 
-    return None
+    return None, None
