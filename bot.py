@@ -17,7 +17,7 @@ from pdf_to_image import pdf_to_image
 from utils import generate_year_options, cleanup_files
 
 
-TOKEN = "8802887183:AAGrlG3OFcRcVs0bsyZm8hSDOpGMOiAE_8U"
+TOKEN = "PUT_YOUR_BOT_TOKEN"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
